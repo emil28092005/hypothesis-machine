@@ -85,32 +85,76 @@ export function agentLastActivity(sessionFile: string | undefined): string | und
   return line || undefined;
 }
 
-/** Persistent non-capturing right-side panel: live agent tree without keyboard navigation. */
+const PANEL_BG = "toolPendingBg";
+
+/**
+ * OpenCode-style persistent right-side panel: a full-height background column
+ * (no box border) holding a flat checklist of agents, mirroring the Todo/plan
+ * sidebar of OpenCode's TUI: `[•]` in-progress (warning), `[ ]` pending and
+ * `[✓]` completed (muted), with a bold title and a footer pinned to the bottom.
+ */
 export function createAgentPanelComponent(
   tree: AgentTree,
-  tui: { requestRender(): void },
+  tui: { requestRender(): void; terminal: { rows: number } },
   theme: Theme,
   done: () => void,
 ): { render(width: number): string[]; invalidate(): void; handleInput(data: string): void; dispose(): void } {
   const timer = setInterval(() => tui.requestRender(), 1500);
+  /** Paint a line with the panel background, padded with spaces to the full overlay width (padding must be inside the bg ANSI codes, otherwise the TUI compositor resets it). */
+  const paint = (line: string, width: number): string => theme.bg(PANEL_BG, truncateToWidth(line, width, "…", true));
+  const blank = (width: number): string => theme.bg(PANEL_BG, " ".repeat(width));
+  const marker = (record: AgentRecord): { glyph: string; color: (s: string) => string } => {
+    switch (record.status) {
+      case "running": return { glyph: "•", color: (s) => theme.fg("warning", s) };
+      case "waiting": return { glyph: " ", color: (s) => theme.fg("muted", s) };
+      case "completed": return { glyph: "✓", color: (s) => theme.fg("muted", s) };
+      case "failed": return { glyph: "✖", color: (s) => theme.fg("error", s) };
+      case "interrupted": return { glyph: "!", color: (s) => theme.fg("warning", s) };
+      default: return { glyph: " ", color: (s) => theme.fg("dim", s) };
+    }
+  };
+  const row = (record: AgentRecord, width: number, now: number): string => {
+    const { glyph, color } = marker(record);
+    const time = elapsed(record, now);
+    return paint(`${color(`[${glyph}]`)} ${color(shortName(record.id))}${time ? ` ${theme.fg("dim", time)}` : ""}`, width);
+  };
   return {
     render(width) {
-      const rows = buildRows(tree).filter((row) => row.depth > 0);
       const now = Date.now();
-      const active = rows.filter((row) => row.record.status === "running" || row.record.status === "waiting").length;
-      const lines: string[] = [theme.fg("accent", `◆ agents`) + theme.fg("dim", ` · ${tree.runId}`), theme.fg("dim", `${active} active · ${rows.length} agents`), ""];
-      for (const { record, prefix } of rows) {
-        const icon = STATUS_ICON[record.status];
-        const status = STATUS_COLOR[record.status](theme, record.status);
-        const time = elapsed(record, now);
-        lines.push(`${prefix}${theme.fg("text", icon)} ${theme.fg("text", shortName(record.id))} ${status}${time ? ` ${theme.fg("dim", time)}` : ""}`);
+      const all = tree.list().filter((agent) => agent.id !== tree.rootId);
+      const isActive = (agent: AgentRecord): boolean => agent.status === "running" || agent.status === "waiting" || agent.status === "created";
+      const active = all.filter(isActive);
+      const finished = all.filter((agent) => !isActive(agent)).sort((a, b) => (b.finishedAt ?? "").localeCompare(a.finishedAt ?? ""));
+      const visibleActive = active.slice(0, 8);
+      const visibleFinished = finished.slice(0, 3);
+      const hidden = Math.max(0, active.length - visibleActive.length + finished.length - visibleFinished.length);
+
+      const lines: string[] = [
+        paint(theme.fg("text", theme.bold("▼ agents")) + theme.fg("dim", `  ·  ${tree.runId}`), width),
+        paint(theme.fg("dim", `${active.length} active · ${all.length} agents`), width),
+        blank(width),
+      ];
+      for (const record of visibleActive) {
+        lines.push(row(record, width, now));
         if (record.status === "running" || record.status === "waiting") {
           const activity = agentLastActivity(record.sessionFile);
-          if (activity) lines.push(theme.fg("dim", `  ${truncateToWidth(activity, Math.max(20, width - 8))}`));
+          if (activity) lines.push(paint(theme.fg("dim", `   ${truncateToWidth(activity, Math.max(20, width - 6))}`), width));
         }
       }
-      lines.push("", theme.fg("dim", "/agents — details · /agents-panel — hide"));
-      return lines.map((line) => truncateToWidth(line, width));
+      if (visibleFinished.length > 0) {
+        lines.push(blank(width));
+        for (const record of visibleFinished) lines.push(row(record, width, now));
+      }
+      if (hidden > 0) lines.push(paint(theme.fg("dim", `+${hidden} more…`), width));
+
+      // Fill the rest of the right column with the panel background, keeping the
+      // editor + status rows at the bottom visible, and pin the footer at the bottom.
+      const total = Math.max(1, tui.terminal.rows - 2);
+      if (lines.length < total) {
+        while (lines.length < total - 1) lines.push(blank(width));
+        lines.push(paint(theme.fg("dim", "/agents — details · /agents-panel — hide"), width));
+      }
+      return lines;
     },
     invalidate() { /* rebuilt fresh on every render */ },
     handleInput() { /* non-capturing: keys go to the editor */ },

@@ -83,7 +83,7 @@ export class SupervisorIntegration {
       return createAgentPanelComponent(tree, tui, theme, () => { this.agentPanelClose = undefined; done(undefined); });
     }, {
       overlay: true,
-      overlayOptions: { width: "40%", minWidth: 44, maxHeight: "100%", anchor: "top-right", margin: 1, nonCapturing: true, visible: (termWidth) => termWidth >= 100 },
+      overlayOptions: { width: "40%", minWidth: 44, maxHeight: "100%", anchor: "top-right", margin: { top: 0, right: 0, bottom: 0, left: 1 }, nonCapturing: true, visible: (termWidth) => termWidth >= 100 },
     });
   }
 

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Restyled the persistent right-side agent panel (`/agents-panel`) to match
+  OpenCode's Todo/plan sidebar: a full-height background column (no box border,
+  panel background painted across the whole overlay width) with a bold `▼ agents`
+  title, a flat OpenCode-style checklist (`[•]` in-progress in warning color,
+  `[ ]` pending and `[✓]` completed in muted, `[✖]` failed in error), live
+  per-agent activity lines under running agents, and the footer hint pinned to
+  the bottom of the column. The panel now sits flush against the right edge of
+  the terminal and stops two rows above the bottom so the editor and status bar
+  stay visible.
+
 - Fixed the research loop and agent tree getting permanently stuck after
   `research_control stop`: `start` now restarts a stopped/completed run in the
   same session (`AgentTree.restart` revives the run, archives old branches, and
