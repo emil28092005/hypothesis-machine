@@ -31,18 +31,14 @@
   tree as paused, and resume requires the loop to actually be paused.
 - `read_artifact` now resolves symlinks before the confinement check, so a
   symlink inside the project cannot leak files from outside it.
-- Added a live subagent dashboard: a TUI widget above the editor shows the
-  research run id, loop status, iteration, active agents with elapsed time,
-  and recently finished agents (updated every 1.5 s, hidden when idle).
+- The live widget above the editor shows the research run id, loop status,
+  iteration, active agents with elapsed time, and recently finished agents
+  (updated every 1.5 s, hidden when idle).
 - Subagents no longer stall the main chat on serial model backends: new
   `agent_concurrency` (default 3) caps how many subagent sessions stream at
   once, and optional `subagent_model` routes subagents to a different
   model/backend (e.g. a local Ollama model) so they never contend with the
   main session.
-- New `/agents` command opens an interactive overlay with the full agent tree:
-  tree glyphs (├─/└─/│), colored statuses and icons, live elapsed time,
-  keyboard navigation (↑/↓), and a detail pane (Enter) showing each agent's
-  task and result. The live widget header now hints at `/agents`.
 
 ## 0.1.1 — 2026-07-31
 
