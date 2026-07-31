@@ -39,7 +39,7 @@ export class SupervisorIntegration {
     runtimeFactory.attachTree(this.tree); if (!runId) this.pi.appendEntry(RUN_ENTRY, { runId: this.tree.runId });
     this.loop = new ResearchLoop(stateDir, this.tree.runId, this.tree.inspect(this.tree.rootId).task, this.config);
     this.lastScheduledIteration = this.loop.snapshot().iteration;
-    const tools = createResearchTools({ tree: this.tree, parentId: this.tree.rootId, memory: this.memory, web: this.web, experiments: this.experiments, cwd: ctx.cwd });
+    const tools = createResearchTools({ tree: this.tree, parentId: this.tree.rootId, memory: this.memory, web: this.web, experiments: this.experiments, cwd: ctx.cwd, ...(this.config.subagent_model ? { subagentModel: this.config.subagent_model } : {}) });
     for (const tool of [...tools, this.researchControlTool()]) this.pi.registerTool(this.withCompactRenderer(tool));
     if (ctx.hasUI) { ctx.ui.setStatus("hypothesis-machine", `HM ${this.tree.runId} · ready`); this.installAgentWidget(ctx); }
   }

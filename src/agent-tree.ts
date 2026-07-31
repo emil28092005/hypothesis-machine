@@ -21,6 +21,8 @@ export class AgentTree {
   private readonly executions = new Map<string, Promise<AgentResult>>();
   private readonly factory: AgentFactory;
   private readonly onRootMessage: ((fromId: string, message: string) => void) | undefined;
+  private runningCount = 0;
+  private readonly slotWaiters: Array<() => void> = [];
 
   constructor(private readonly store: RunStore, private readonly runtimeFactory: AgentRuntimeFactory, private readonly limits: ResearchLimits, options: TreeOptions) {
     this.runId = options.runId ?? `run-${randomUUID().slice(0, 8)}`;
@@ -84,39 +86,53 @@ export class AgentTree {
     return structuredClone(record);
   }
 
+  /** Gate how many subagent sessions stream simultaneously so the main chat stays responsive on serial backends. */
+  private acquireSlot(): Promise<void> {
+    const limit = this.limits.agent_concurrency;
+    if (limit <= 0 || this.runningCount < limit) { this.runningCount++; return Promise.resolve(); }
+    return new Promise((resolve) => this.slotWaiters.push(() => { this.runningCount++; resolve(); }));
+  }
+  private releaseSlot(): void { this.runningCount = Math.max(0, this.runningCount - 1); const next = this.slotWaiters.shift(); if (next) next(); }
+
   async start(id: string): Promise<AgentResult> {
     const existing = this.executions.get(id);
     if (existing) return existing;
     const record = this.mutable(id);
     if (!["created", "interrupted"].includes(record.status)) throw new AgentTreeError(`Cannot start ${id} from ${record.status}`);
-    const spec = readAgentSpec(record.specPath);
-    const runtime = await this.runtimeFactory.create(structuredClone(record), spec);
-    this.runtimes.set(id, runtime);
-    if (runtime.sessionFile) record.sessionFile = runtime.sessionFile;
-    record.status = "running"; record.startedAt = new Date().toISOString(); this.persist();
-    const prompt = `Execute your specification at ${record.specPath}. Your agent id is ${id}. Return a concise evidence-backed result. Use spawn_agent when a genuinely specialized subtask merits recursion.`;
-    const timeoutSeconds = this.limits.agent_timeout_seconds ?? 1800;
-    const execution = new Promise<AgentResult>((resolveExecution) => {
-      let settled = false;
-      const finish = (result: AgentResult) => { if (settled) return; settled = true; clearTimeout(timer); record.finishedAt = result.completedAt; this.persist(); resolveExecution(result); };
-      const timer = setTimeout(() => {
-        record.status = "failed"; record.error = `Agent timed out after ${timeoutSeconds}s`; record.finishedAt = new Date().toISOString();
-        void runtime.cancel().catch(() => undefined);
-        finish({ status: "failed", summary: `Agent timed out after ${timeoutSeconds}s`, completedAt: record.finishedAt });
-      }, timeoutSeconds * 1000);
-      runtime.start(prompt).then((result) => {
-        if (settled) return;
-        if (record.status === "interrupted") { finish(result); return; }
-        if (record.status === "cancelled") { finish(record.result ?? { status: "cancelled", summary: "Cancelled", completedAt: record.finishedAt ?? new Date().toISOString() }); return; }
-        record.result = result; record.status = result.status; finish(result);
-      }).catch((error: unknown) => {
-        if (settled) return;
-        record.status = "failed"; record.error = error instanceof Error ? error.message : String(error);
-        finish({ status: "failed", summary: record.error, completedAt: new Date().toISOString() });
-      }).finally(() => { clearTimeout(timer); runtime.dispose(); this.runtimes.delete(id); this.executions.delete(id); });
-    });
-    this.executions.set(id, execution);
-    return execution;
+    await this.acquireSlot();
+    try {
+      const spec = readAgentSpec(record.specPath);
+      const runtime = await this.runtimeFactory.create(structuredClone(record), spec);
+      this.runtimes.set(id, runtime);
+      if (runtime.sessionFile) record.sessionFile = runtime.sessionFile;
+      record.status = "running"; record.startedAt = new Date().toISOString(); this.persist();
+      const prompt = `Execute your specification at ${record.specPath}. Your agent id is ${id}. Return a concise evidence-backed result. Use spawn_agent when a genuinely specialized subtask merits recursion.`;
+      const timeoutSeconds = this.limits.agent_timeout_seconds ?? 1800;
+      const execution = new Promise<AgentResult>((resolveExecution) => {
+        let settled = false;
+        const finish = (result: AgentResult) => { if (settled) return; settled = true; clearTimeout(timer); record.finishedAt = result.completedAt; this.persist(); resolveExecution(result); };
+        const timer = setTimeout(() => {
+          record.status = "failed"; record.error = `Agent timed out after ${timeoutSeconds}s`; record.finishedAt = new Date().toISOString();
+          void runtime.cancel().catch(() => undefined);
+          finish({ status: "failed", summary: `Agent timed out after ${timeoutSeconds}s`, completedAt: record.finishedAt });
+        }, timeoutSeconds * 1000);
+        runtime.start(prompt).then((result) => {
+          if (settled) return;
+          if (record.status === "interrupted") { finish(result); return; }
+          if (record.status === "cancelled") { finish(record.result ?? { status: "cancelled", summary: "Cancelled", completedAt: record.finishedAt ?? new Date().toISOString() }); return; }
+          record.result = result; record.status = result.status; finish(result);
+        }).catch((error: unknown) => {
+          if (settled) return;
+          record.status = "failed"; record.error = error instanceof Error ? error.message : String(error);
+          finish({ status: "failed", summary: record.error, completedAt: new Date().toISOString() });
+        }).finally(() => { clearTimeout(timer); runtime.dispose(); this.runtimes.delete(id); this.executions.delete(id); this.releaseSlot(); });
+      });
+      this.executions.set(id, execution);
+      return execution;
+    } catch (error) {
+      this.releaseSlot();
+      throw error;
+    }
   }
 
   async message(id: string, text: string, fromId = "system"): Promise<void> { if (id === this.rootId && !this.runtimes.has(id)) { if (!this.onRootMessage) throw new AgentTreeError("Supervisor message bridge is unavailable"); this.onRootMessage(fromId, text); return; } return this.followUp(id, text); }

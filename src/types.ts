@@ -96,4 +96,6 @@ export interface ResearchLimits {
   allow_recursive_spawning: boolean;
   max_research_iterations: number;
   agent_timeout_seconds: number;
+  /** Maximum number of subagent sessions streaming at the same time (keeps the main chat responsive when the model backend serializes requests). */
+  agent_concurrency: number;
 }

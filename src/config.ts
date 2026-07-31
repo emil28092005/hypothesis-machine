@@ -10,6 +10,8 @@ export interface HypothesisMachineConfig extends ResearchLimits {
   browser_use_url?: string;
   web_timeout_ms: number;
   max_download_bytes: number;
+  /** Route spawned subagents to a different model/backend, e.g. "ollama/gemma4:e4b", so they do not contend with the main session. "inherit" (default) uses the caller's model. */
+  subagent_model?: string;
   experiment: { image: string; cpus: number; memory_mb: number; timeout_seconds: number };
 }
 
@@ -22,6 +24,7 @@ export const DEFAULT_CONFIG: HypothesisMachineConfig = {
   max_iterations_without_progress: 3,
   max_research_iterations: 12,
   agent_timeout_seconds: 1800,
+  agent_concurrency: 3,
   allow_recursive_spawning: true,
   searxng_url: "http://127.0.0.1:8888",
   firecrawl_url: "http://127.0.0.1:3002",

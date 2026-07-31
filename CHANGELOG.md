@@ -34,6 +34,11 @@
 - Added a live subagent dashboard: a TUI widget above the editor shows the
   research run id, loop status, iteration, active agents with elapsed time,
   and recently finished agents (updated every 1.5 s, hidden when idle).
+- Subagents no longer stall the main chat on serial model backends: new
+  `agent_concurrency` (default 3) caps how many subagent sessions stream at
+  once, and optional `subagent_model` routes subagents to a different
+  model/backend (e.g. a local Ollama model) so they never contend with the
+  main session.
 
 ## 0.1.1 — 2026-07-31
 
