@@ -3,6 +3,7 @@ import { defineTool, ModelRuntime, type ExtensionAPI, type ExtensionCommandConte
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
+import { AgentChatPanel, AGENT_STATUS_GLYPH, shortAgentName, type AgentChatPanelResult } from "./agent-chat-panel.js";
 import { AgentTree } from "./agent-tree.js";
 import { loadConfig, type HypothesisMachineConfig } from "./config.js";
 import { PiAgentRuntimeFactory } from "./pi-runtime.js";
@@ -12,17 +13,10 @@ import { RunStore } from "./run-store.js";
 import { ExperimentRunner } from "./tools/experiment.js";
 import { createResearchTools } from "./tools/index.js";
 import { WebGateway } from "./tools/web.js";
-import type { AgentRecord, AgentStatus } from "./types.js";
+import type { AgentRecord } from "./types.js";
 
 const RUN_ENTRY = "hypothesis-machine-run";
 const toolText = (value: unknown) => ({ content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }], details: {} });
-
-/** One-character status glyphs for the agent-chat selector (OpenCode-style checklist markers). */
-const AGENT_STATUS_GLYPH: Record<AgentStatus, string> = {
-  created: "·", running: "•", waiting: "·", completed: "✓", failed: "✖", cancelled: "·", interrupted: "!", archived: "·",
-};
-
-function shortAgentName(id: string): string { return id.replace(/-[a-f0-9]{8}$/, ""); }
 
 /**
  * Derive the run id from an agent session file path (`<stateDir>/runs/<runId>/sessions/…`).
@@ -81,7 +75,7 @@ export class SupervisorIntegration {
     const sessionFile = ctx.sessionManager.getSessionFile();
     const runId = runIdFromEntry ?? runIdFromSessionPath(sessionFile, stateDir);
     const isMainSession = !runIdFromEntry && !runId;
-    const runtimeFactory = new PiAgentRuntimeFactory({ cwd: ctx.cwd, config: this.config, store, memory: this.memory, web: this.web, experiments: this.experiments, ...(this.modelRuntime ? { modelRuntime: this.modelRuntime } : {}), ...(this.modelRegistry ? { modelRegistry: this.modelRegistry } : {}), ...(ctx.model ? { model: ctx.model } : {}), ...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel } : {}) });
+    const runtimeFactory = new PiAgentRuntimeFactory({ cwd: ctx.cwd, config: this.config, store, memory: this.memory, web: this.web, experiments: this.experiments, ...(this.modelRuntime ? { modelRuntime: this.modelRuntime } : {}), ...(this.modelRegistry ? { modelRegistry: this.modelRegistry } : {}), ...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel } : {}) });
     const onRootMessage = (fromId: string, message: string) => this.pi.sendMessage({ customType: "hypothesis-machine-agent-update", content: `Agent ${fromId} reports:\n\n${message}`, display: true, details: { fromId, runId: this.tree?.runId } }, { triggerTurn: false, deliverAs: "nextTurn" });
     this.tree = runId && store.exists(runId) ? AgentTree.restore(store, runtimeFactory, this.config, runId, onRootMessage) : new AgentTree(store, runtimeFactory, this.config, { goal: "Research requested in the current Supervisor session", inherited: { model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "inherit", thinkingLevel: ctx.thinkingLevel ?? "inherit" }, onRootMessage });
     runtimeFactory.attachTree(this.tree); if (!runId) this.pi.appendEntry(RUN_ENTRY, { runId: this.tree.runId });
@@ -115,6 +109,37 @@ export class SupervisorIntegration {
 
   team(): string { return this.required().tree.render(); }
   findings(kind?: string): unknown { return this.required().memory.list(kind); }
+
+  /**
+   * OpenCode-style agent inspector: full TUI panel with the agent tree on the
+   * left and the selected agent's live chat transcript on the right. Tracking
+   * happens inside the current session; the chat area is not replaced.
+   */
+  async showAgentChatPanel(ctx: ExtensionCommandContext, filter?: string): Promise<void> {
+    const { tree } = this.required();
+    const agents = tree.list();
+    const query = (filter ?? "").trim().toLowerCase();
+    const filtered = query
+      ? agents.filter((agent) => agent.id.toLowerCase().includes(query) || agent.task.toLowerCase().includes(query))
+      : agents;
+    if (filtered.length === 0) { ctx.ui.notify(query ? `No agents match "${filter}"` : "No agents in this run yet", "info"); return; }
+    const result = await ctx.ui.custom<AgentChatPanelResult>((tui, theme, _kb, done) => {
+      const panel = new AgentChatPanel({
+        theme,
+        rootId: tree.rootId,
+        runId: tree.runId,
+        goal: tree.inspect(tree.rootId).task,
+        getAgents: () => tree.list(),
+        ...(query ? { filter: query } : {}),
+      });
+      const refresh = setInterval(() => { panel.invalidate(); tui.requestRender(); }, 1500);
+      const finish = (value: AgentChatPanelResult) => { clearInterval(refresh); done(value); };
+      panel.onDone = finish;
+      return { render: (w) => panel.render(w), handleInput: (d) => { panel.handleInput(d); panel.invalidate(); tui.requestRender(); }, invalidate: () => panel.invalidate(), dispose: () => clearInterval(refresh) };
+    });
+    if (!result || result.action === "close") return;
+    if (result.action === "openSession") { await this.showAgentChat(ctx, result.agentId); return; }
+  }
 
   /**
    * OpenCode-style subagent switcher: let the user pick an agent and open its
@@ -182,7 +207,7 @@ export class SupervisorIntegration {
     return lines;
   }
 
-  private shortName(id: string): string { return id.replace(/-[a-f0-9]{8}$/, ""); }
+  private shortName(id: string): string { return shortAgentName(id); }
   continueIfNeeded(ctx: ExtensionContext): void { const loop = this.loop; if (!loop || !ctx.isIdle()) return; const state = loop.snapshot(); if (state.status !== "running" || state.iteration <= this.lastScheduledIteration) return; this.lastScheduledIteration = state.iteration; if (ctx.hasUI) ctx.ui.setStatus("hypothesis-machine", `HM ${state.runId} · iteration ${state.iteration + 1}`); this.pi.sendUserMessage(`Continue bounded research run ${state.runId} with iteration ${state.iteration + 1}. Reassess unknowns and contradictions, use agents only where they add information, then call research_control record_iteration. Stop when its coded state is no longer running.`); }
   async shutdown(): Promise<void> { if (this.widgetTimer) { clearInterval(this.widgetTimer); this.widgetTimer = undefined; } this.requestAgentRender = undefined; await this.tree?.shutdown(); this.memory?.close(); this.tree = undefined; }
 }

@@ -44,9 +44,12 @@ Pi remains the same chat interface, model selector, credential store, session UI
 and streaming runtime. Do not install third-party subagent extensions for this
 package; Hypothesis Machine has its own recursive implementation.
 
-Pi 0.78 passes its official `ModelRegistry` directly to children. Pi 0.83+
-uses the newer shared `ModelRuntime`. Neither path reads or copies keys in the
-extension. After updating this local package, restart Pi or run `/reload`.
+Every subagent is pinned to `deepseek/deepseek-v4-flash`, using Pi's built-in
+Direct DeepSeek API provider rather than inheriting the Supervisor's LLM. Add the
+key once through `/login deepseek` (or set `DEEPSEEK_API_KEY`); the extension never
+reads or copies it. Pi 0.83+ uses its official `ModelRuntime`; Pi 0.78 uses the
+provided `ModelRegistry`. Override `subagent_model` only to deliberately choose a
+different Pi model. After updating this local package, restart Pi or run `/reload`.
 
 Optional project configuration:
 
@@ -89,6 +92,9 @@ background branches are controlled with `agent_control`.
 ## Commands
 
 - `/team` — tree, tasks, and statuses;
+- `/agent [filter]` — OpenCode-style inspector: agent tree on the left, live chat transcript of the selected agent on the right (`↑↓` select, `enter` open chat, `t` toggle thinking, `o` open the full session, `esc` close);
+- `/agent-open [filter]` — open a subagent's full chat as its own session;
+- `/back` — return to the main session after `/agent-open`;
 - `/research <goal>` — start the explicit bounded loop;
 - `/research-status`, `/research-pause`, `/research-resume`, `/research-stop`;
 - `/findings`, `/hypotheses`.

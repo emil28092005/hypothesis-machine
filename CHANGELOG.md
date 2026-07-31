@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- New `/agent [filter]` OpenCode-style chat inspector: a full TUI panel shows the
+  agent tree on the left and the selected agent's live chat transcript on the
+  right (`↑↓` select, `enter`/`tab` open chat, `t` toggle thinking, `o` open the
+  full session, `esc` close). Transcripts are parsed from the agent session
+  JSONL (user/assistant/tool-call/tool-result/thinking blocks) and refresh every
+  1.5s while an agent is streaming; the tree shows status glyphs, elapsed time,
+  and per-agent tasks. `/agent-open` keeps the previous session-switching flow
+  (`Subagent Actions → Open`), with `/back` returning to the main session.
+
 - New `/agent [filter]` command opens a subagent's full chat session in the TUI
   (OpenCode-style `Subagent Actions → Open`): a selector lists the run's agents
   with status glyphs, elapsed time, and task; picking one switches the session

@@ -11,7 +11,8 @@ export default function hypothesisMachine(pi: ExtensionAPI): void {
   pi.on("session_shutdown", async () => { await supervisor.shutdown(); });
 
   pi.registerCommand("team", { description: "Show the recursive research team", handler: async (_args, ctx) => { ctx.ui.notify(supervisor.team(), "info"); } });
-  pi.registerCommand("agent", { description: "Open a subagent's full chat (like OpenCode)", handler: async (args, ctx) => { await supervisor.showAgentChat(ctx, args.trim() || undefined); } });
+  pi.registerCommand("agent", { description: "Open the OpenCode-style subagent chat inspector (tree + live transcripts)", handler: async (args, ctx) => { await supervisor.showAgentChatPanel(ctx, args.trim() || undefined); } });
+  pi.registerCommand("agent-open", { description: "Open a subagent's full chat as a separate session (like OpenCode)", handler: async (args, ctx) => { await supervisor.showAgentChat(ctx, args.trim() || undefined); } });
   pi.registerCommand("back", { description: "Return to the main session from an agent chat", handler: async (_args, ctx) => { const main = supervisor.mainSessionFile; if (!main) { ctx.ui.notify("Main session is not recorded", "warning"); return; } if (ctx.sessionManager.getSessionFile() === main) { ctx.ui.notify("Already on the main session", "info"); return; } await ctx.switchSession(main); } });
   pi.registerCommand("research", { description: "Start a bounded research run", handler: async (args, ctx) => { const goal = args.trim(); if (!goal) { ctx.ui.notify("Usage: /research <goal>", "warning"); return; } const state = supervisor.loop; if (!state || !supervisor.tree) throw new Error("Not initialized"); supervisor.tree.setGoal(goal); state.setGoal(goal); state.start(); const prompt = `Research goal: ${goal}\nUse research_control and the recursive agent tools. Create specialized children only when useful. Record each iteration and stop on the coded conditions. Report important progress without flooding the chat.`; if (ctx.isIdle()) pi.sendUserMessage(prompt); else pi.sendUserMessage(prompt, { deliverAs: "followUp" }); } });
   pi.registerCommand("research-status", { description: "Show research loop state", handler: async (_args, ctx) => { ctx.ui.notify(JSON.stringify(supervisor.loop?.snapshot() ?? {}, null, 2), "info"); } });
@@ -22,6 +23,7 @@ export default function hypothesisMachine(pi: ExtensionAPI): void {
   pi.registerCommand("hypotheses", { description: "List stored hypotheses", handler: async (_args, ctx) => { ctx.ui.notify(JSON.stringify(supervisor.findings("hypothesis"), null, 2), "info"); } });
 }
 
+export * from "./agent-chat-panel.js";
 export * from "./agent-tree.js";
 export * from "./agent-spec.js";
 export * from "./research-memory.js";

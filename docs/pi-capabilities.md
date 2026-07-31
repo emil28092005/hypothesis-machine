@@ -15,9 +15,10 @@ dispatch, lifecycle events, tool rendering, and model/provider execution.
 Each child is created by the official SDK `createAgentSession()`. It receives:
 
 - a persistent `SessionManager` in the research run's `sessions/` directory;
-- the parent's selected `Model` and thinking level;
-- one shared official model/auth service: `ModelRuntime` on Pi 0.83+, or the
-  parent context's `ModelRegistry` on Pi 0.78;
+- the pinned `deepseek/deepseek-v4-flash` model (not the parent's selected LLM)
+  and the parent's thinking level;
+- one official model/auth service: `ModelRuntime` on Pi 0.83+, or the parent
+  context's `ModelRegistry` on Pi 0.78. Pi resolves the direct DeepSeek API key;
 - a `DefaultResourceLoader` that keeps project context but disables extension
   rediscovery for the child (the recursive tools are injected explicitly);
 - only its allowed read-only built-ins and Hypothesis Machine custom tools.

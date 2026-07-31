@@ -8,10 +8,10 @@ agent_timeout_seconds: 1800
 # Maximum number of subagent sessions streaming at the same time. Lower it if
 # the main chat stalls while subagents run on the same model backend.
 agent_concurrency: 3
-# Route subagents to a different model/backend so they never contend with the
-# main session, e.g. "ollama/gemma4:e4b" or "deepseek/deepseek-v4-flash".
-# "inherit" (unset) uses the caller's model.
-# subagent_model: "ollama/gemma4:e4b"
+# Every subagent uses Pi's direct DeepSeek API integration by default, rather
+# than inheriting the Supervisor model. Store the key with `/login deepseek` or
+# set DEEPSEEK_API_KEY. Override only to deliberately use another Pi model.
+subagent_model: "deepseek/deepseek-v4-flash"
 allow_recursive_spawning: true
 searxng_url: http://127.0.0.1:8888
 firecrawl_url: http://127.0.0.1:3002

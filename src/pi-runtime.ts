@@ -31,7 +31,7 @@ class PiRuntime implements AgentRuntime {
   dispose(): void { this.session.dispose(); }
 }
 
-export interface PiRuntimeDependencies { cwd: string; config: HypothesisMachineConfig; store: RunStore; memory: ResearchMemory; web: WebGateway; experiments: ExperimentRunner; modelRuntime?: ModelRuntime; modelRegistry?: ModelRegistry; model?: any; thinkingLevel?: any }
+export interface PiRuntimeDependencies { cwd: string; config: HypothesisMachineConfig; store: RunStore; memory: ResearchMemory; web: WebGateway; experiments: ExperimentRunner; modelRuntime?: ModelRuntime; modelRegistry?: ModelRegistry; thinkingLevel?: any }
 
 export class PiAgentRuntimeFactory implements AgentRuntimeFactory {
   private tree?: AgentTree;
@@ -51,15 +51,19 @@ export class PiAgentRuntimeFactory implements AgentRuntimeFactory {
     const sessionManager = record.sessionFile
       ? SessionManager.open(record.sessionFile, this.deps.store.sessionDir(record.runId), this.deps.cwd)
       : SessionManager.create(this.deps.cwd, this.deps.store.sessionDir(record.runId));
-    const [provider, ...modelParts] = spec.model.split("/");
-    const inheritedModel = spec.model !== "inherit" && provider && modelParts.length
+    // Runtime configuration is authoritative: persisted specs, including older
+    // "inherit" records, cannot route a child back to the Supervisor's LLM.
+    const modelName = this.deps.config.subagent_model;
+    const [provider, ...modelParts] = modelName.split("/");
+    if (!this.deps.modelRuntime && !this.deps.modelRegistry) throw new Error("Pi model runtime is unavailable; Hypothesis Machine requires Pi 0.78 or newer");
+    const subagentModel = provider && modelParts.length
       ? this.deps.modelRuntime?.getModel(provider, modelParts.join("/")) ?? this.deps.modelRegistry?.find(provider, modelParts.join("/"))
       : undefined;
+    if (!subagentModel) throw new Error(`Pi cannot resolve subagent model ${JSON.stringify(modelName)}. Configure its direct API credentials with /login deepseek or DEEPSEEK_API_KEY.`);
     const inheritedThinking = spec.thinking_level !== "inherit" ? spec.thinking_level : this.deps.thinkingLevel;
-    if (!this.deps.modelRuntime && !this.deps.modelRegistry) throw new Error("Pi model runtime is unavailable; Hypothesis Machine requires Pi 0.78 or newer");
     const modelServices = this.deps.modelRuntime ? { modelRuntime: this.deps.modelRuntime } : { modelRegistry: this.deps.modelRegistry };
     const { session } = await createAgentSession({
-      cwd: this.deps.cwd, ...modelServices, model: inheritedModel ?? this.deps.model,
+      cwd: this.deps.cwd, ...modelServices, model: subagentModel,
       thinkingLevel: inheritedThinking as any, resourceLoader, settingsManager, sessionManager,
       customTools, tools: [...safeBuiltins, ...customNames],
     } as any);
