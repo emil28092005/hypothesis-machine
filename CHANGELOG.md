@@ -47,6 +47,10 @@
   panel with the live agent tree: non-capturing (typing keeps working),
   auto-refreshed every 1.5 s, hidden on terminals narrower than 100 columns,
   and closed automatically on shutdown.
+- The right-side panel now fills the whole right column (width 40%, full
+  height) and shows each running subagent's most recent activity under its
+  row — the last tool call with its query or the last assistant text — read
+  from the tail of the agent's session file (cached by file size).
 
 ## 0.1.1 — 2026-07-31
 

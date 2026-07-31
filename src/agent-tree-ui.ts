@@ -1,4 +1,5 @@
 import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { closeSync, openSync, readSync, statSync } from "node:fs";
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { AgentTree } from "./agent-tree.js";
 import type { AgentRecord } from "./types.js";
@@ -44,6 +45,46 @@ function elapsed(record: AgentRecord, now: number): string {
   return `${String(Math.floor(span / 60)).padStart(2, "0")}:${String(span % 60).padStart(2, "0")}`;
 }
 
+/** Cache of the last observed session-file size and its extracted activity line. */
+const activityCache = new Map<string, { size: number; line: string }>();
+
+function collapse(text: string): string { return text.replace(/\s+/g, " ").trim(); }
+
+/** Read the tail of an agent session file and extract its most recent activity: last tool call (name + query) or last assistant text. */
+export function agentLastActivity(sessionFile: string | undefined): string | undefined {
+  if (!sessionFile) return undefined;
+  let size: number;
+  try { size = statSync(sessionFile).size; } catch { return undefined; }
+  const cached = activityCache.get(sessionFile);
+  if (cached && cached.size === size) return cached.line || undefined;
+  let text = "";
+  try {
+    const fd = openSync(sessionFile, "r");
+    try { const start = Math.max(0, size - 65536); const buf = Buffer.alloc(size - start); readSync(fd, buf, 0, buf.length, start); text = buf.toString("utf8"); } finally { closeSync(fd); }
+  } catch { return cached?.line || undefined; }
+  const queries = new Map<string, string | undefined>();
+  let toolName: string | undefined; let toolId: string | undefined; let lastText: string | undefined;
+  for (const raw of text.split("\n")) {
+    let entry: { message?: { role?: string; toolName?: string; toolCallId?: string; content?: Array<{ type?: string; id?: string; name?: string; arguments?: unknown; text?: string }> } };
+    try { entry = JSON.parse(raw) as typeof entry; } catch { continue; }
+    const msg = entry?.message; if (!msg) continue;
+    if (msg.role === "toolResult") { toolName = msg.toolName; toolId = msg.toolCallId; }
+    if (msg.role === "assistant" && Array.isArray(msg.content)) {
+      for (const part of msg.content) {
+        if (part?.type === "toolCall" && typeof part.id === "string") {
+          const args = part.arguments as Record<string, unknown> | undefined;
+          const query = typeof args?.query === "string" ? args.query : args ? String(Object.values(args)[0] ?? "") : "";
+          queries.set(part.id, query);
+        }
+        if (part?.type === "text" && typeof part.text === "string" && part.text.trim()) lastText = collapse(part.text);
+      }
+    }
+  }
+  const line = toolName ? ` ${toolName}${toolId && queries.get(toolId) ? `: \"${queries.get(toolId)}\"` : ""}` : lastText ? ` ${lastText}` : "";
+  activityCache.set(sessionFile, { size, line });
+  return line || undefined;
+}
+
 /** Persistent non-capturing right-side panel: live agent tree without keyboard navigation. */
 export function createAgentPanelComponent(
   tree: AgentTree,
@@ -63,6 +104,10 @@ export function createAgentPanelComponent(
         const status = STATUS_COLOR[record.status](theme, record.status);
         const time = elapsed(record, now);
         lines.push(`${prefix}${theme.fg("text", icon)} ${theme.fg("text", shortName(record.id))} ${status}${time ? ` ${theme.fg("dim", time)}` : ""}`);
+        if (record.status === "running" || record.status === "waiting") {
+          const activity = agentLastActivity(record.sessionFile);
+          if (activity) lines.push(theme.fg("dim", `  ${truncateToWidth(activity, Math.max(20, width - 8))}`));
+        }
       }
       lines.push("", theme.fg("dim", "/agents — details · /agents-panel — hide"));
       return lines.map((line) => truncateToWidth(line, width));
