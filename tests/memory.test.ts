@@ -1,0 +1,11 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import { ResearchMemory } from "../src/research-memory.js";
+
+describe("ResearchMemory", () => {
+  it("persists findings and performs rebuildable full-text search", () => { const memory = new ResearchMemory(mkdtempSync(resolve(tmpdir(), "hm-memory-"))); const id = memory.save({ type: "fact", status: "corroborated", createdBy: "verifier", runId: "run-1", title: "Catalyst result", statement: "Catalyst alpha improves the measured yield.", evidence: "Independent measurements agree.", sources: ["source-a", "source-b"], limitations: "Small sample" }); expect(memory.search("catalyst")[0]?.id).toBe(id); memory.close(); expect(memory.rebuildIndex()).toBe(1); expect(memory.search("yield")[0]?.id).toBe(id); memory.close(); });
+  it("does not allow unsourced claims to become corroborated facts", () => { const memory = new ResearchMemory(mkdtempSync(resolve(tmpdir(), "hm-memory-"))); expect(() => memory.save({ type: "fact", status: "corroborated", createdBy: "agent", runId: "run", title: "Claim", statement: "Unsupported" })).toThrow(/requires sources/); memory.close(); });
+  it("keeps negative results searchable", () => { const memory = new ResearchMemory(mkdtempSync(resolve(tmpdir(), "hm-memory-"))); memory.save({ type: "experiment_result", status: "rejected", createdBy: "runner", runId: "run", title: "Null replication", statement: "No measurable effect", negativeResult: true }); expect(memory.search("replication")).toHaveLength(1); memory.close(); });
+});

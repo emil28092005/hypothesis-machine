@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.hypothesis-machine/
+.env
+.env.*
+!.env.example
+*.log
+*.tgz
+coverage/
+.DS_Store
+.idea/
+.vscode/

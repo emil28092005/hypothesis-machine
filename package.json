@@ -1,0 +1,41 @@
+{
+  "name": "hypothesis-machine",
+  "version": "0.1.1",
+  "description": "Recursive research teams for the official Pi Coding Agent",
+  "keywords": [
+    "pi-coding-agent",
+    "research",
+    "multi-agent",
+    "hypothesis-testing"
+  ],
+  "type": "module",
+  "license": "MIT",
+  "files": ["src", "prompts", "docs", "infra", "services", ".hypothesis-machine.example.yaml", "README.md", "CHANGELOG.md"],
+  "pi": { "extensions": ["./src/index.ts"] },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "vitest run tests/extension-smoke.test.ts && node tests/pi-rpc-smoke.mjs",
+    "smoke:installed": "PI_SMOKE_BIN=pi node tests/pi-rpc-smoke.mjs",
+    "lint": "eslint .",
+    "check": "npm run typecheck && npm run lint && npm test && npm run build && npm run smoke"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
+    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-tui": "0.83.0",
+    "typebox": "^1.0.56",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "eslint": "^10.8.0",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.38.0",
+    "vitest": "^3.2.4"
+  },
+  "engines": { "node": ">=22.19" }
+}
