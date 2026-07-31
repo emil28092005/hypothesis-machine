@@ -69,7 +69,7 @@ export class SupervisorIntegration {
     const tree = this.required().tree;
     await ctx.ui.custom<undefined>((tui, theme, _kb, done) => createAgentTreeOverlay(tree, tui, theme, () => done(undefined)), {
       overlay: true,
-      overlayOptions: { width: "65%", minWidth: 60, maxHeight: "75%", anchor: "center", visible: (termWidth) => termWidth >= 60 },
+      overlayOptions: { width: "55%", minWidth: 60, maxHeight: "80%", anchor: "top-right", margin: 1, visible: (termWidth) => termWidth >= 60 },
     });
   }
 
