@@ -93,8 +93,7 @@ background branches are controlled with `agent_control`.
 
 - `/team` — tree, tasks, and statuses;
 - `/agent [filter]` — OpenCode-style inspector: agent tree on the left, live chat transcript of the selected agent on the right (`↑↓` select, `enter` open chat, `t` toggle thinking, `o` open the full session, `esc` close);
-- `/agent-open [filter]` — open a subagent's full chat as its own session;
-- `/back` — return to the main session after `/agent-open`;
+- `/back` — return to the main session after opening an agent chat;
 - `/research <goal>` — start the explicit bounded loop;
 - `/research-status`, `/research-pause`, `/research-resume`, `/research-stop`;
 - `/findings`, `/hypotheses`.
