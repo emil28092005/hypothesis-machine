@@ -1,5 +1,5 @@
-import { resolve } from "node:path";
-import { defineTool, ModelRuntime, type ExtensionAPI, type ExtensionContext, type ModelRegistry, type Theme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { resolve, sep } from "node:path";
+import { defineTool, ModelRuntime, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext, type ModelRegistry, type Theme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -12,9 +12,50 @@ import { RunStore } from "./run-store.js";
 import { ExperimentRunner } from "./tools/experiment.js";
 import { createResearchTools } from "./tools/index.js";
 import { WebGateway } from "./tools/web.js";
+import type { AgentRecord, AgentStatus } from "./types.js";
 
 const RUN_ENTRY = "hypothesis-machine-run";
 const toolText = (value: unknown) => ({ content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }], details: {} });
+
+/** One-character status glyphs for the agent-chat selector (OpenCode-style checklist markers). */
+const AGENT_STATUS_GLYPH: Record<AgentStatus, string> = {
+  created: "·", running: "•", waiting: "·", completed: "✓", failed: "✖", cancelled: "·", interrupted: "!", archived: "·",
+};
+
+function shortAgentName(id: string): string { return id.replace(/-[a-f0-9]{8}$/, ""); }
+
+/**
+ * Derive the run id from an agent session file path (`<stateDir>/runs/<runId>/sessions/…`).
+ * Used when the current session is an agent chat opened via `/agent` (it has no
+ * RUN_ENTRY in its branch) so the run is restored instead of creating a new one.
+ */
+export function runIdFromSessionPath(sessionFile: string | undefined, stateDir: string): string | undefined {
+  if (!sessionFile) return undefined;
+  const prefix = `${resolve(stateDir, "runs")}${sep}`;
+  if (!sessionFile.startsWith(prefix)) return undefined;
+  const rest = sessionFile.slice(prefix.length);
+  const runId = rest.slice(0, rest.indexOf(sep));
+  return runId && /^[a-zA-Z0-9-]+$/.test(runId) ? runId : undefined;
+}
+
+function agentElapsed(record: AgentRecord, now: number): string {
+  if (!record.startedAt) return "";
+  const start = Date.parse(record.startedAt);
+  const end = record.finishedAt ? Date.parse(record.finishedAt) : (record.status === "running" || record.status === "waiting") ? now : undefined;
+  if (!end) return "";
+  const span = Math.max(0, Math.round((end - start) / 1000));
+  return `${String(Math.floor(span / 60)).padStart(2, "0")}:${String(span % 60).padStart(2, "0")}`;
+}
+
+/** Build one-line selector options for agents: `✓ short-name [status] mm:ss — task`. */
+export function buildAgentChatOptions(agents: AgentRecord[], now: number): string[] {
+  return agents.map((agent) => {
+    const time = agentElapsed(agent, now);
+    const label = `${AGENT_STATUS_GLYPH[agent.status]} ${shortAgentName(agent.id)} [${agent.status}]${time ? ` ${time}` : ""}`;
+    const task = agent.task.replace(/\s+/g, " ").trim();
+    return task ? `${label} — ${truncateToWidth(task, 120)}` : label;
+  });
+}
 
 export class SupervisorIntegration {
   config: HypothesisMachineConfig | undefined; tree: AgentTree | undefined; memory: ResearchMemory | undefined; web: WebGateway | undefined; experiments: ExperimentRunner | undefined; loop: ResearchLoop | undefined;
@@ -23,6 +64,8 @@ export class SupervisorIntegration {
   private lastScheduledIteration = 0;
   private widgetTimer: NodeJS.Timeout | undefined;
   private requestAgentRender: (() => void) | undefined;
+  /** Session file of the main chat; used by `/back` to return from an agent chat. */
+  mainSessionFile: string | undefined;
   constructor(private readonly pi: ExtensionAPI) {}
 
   async start(ctx: ExtensionContext): Promise<void> {
@@ -32,11 +75,21 @@ export class SupervisorIntegration {
     if (typeof Runtime?.create === "function") this.modelRuntime = await Runtime.create();
     else this.modelRegistry = ctx.modelRegistry;
     const previous = [...ctx.sessionManager.getBranch()].reverse().find((entry) => entry.type === "custom" && entry.customType === RUN_ENTRY);
-    const runId = previous && previous.type === "custom" ? (previous.data as { runId?: string } | undefined)?.runId : undefined;
+    const runIdFromEntry = previous && previous.type === "custom" ? (previous.data as { runId?: string } | undefined)?.runId : undefined;
+    // Agent chats opened via `/agent` carry no RUN_ENTRY in their branch; the run
+    // id is derived from the session file location instead so the run is restored.
+    const sessionFile = ctx.sessionManager.getSessionFile();
+    const runId = runIdFromEntry ?? runIdFromSessionPath(sessionFile, stateDir);
+    const isMainSession = !runIdFromEntry && !runId;
     const runtimeFactory = new PiAgentRuntimeFactory({ cwd: ctx.cwd, config: this.config, store, memory: this.memory, web: this.web, experiments: this.experiments, ...(this.modelRuntime ? { modelRuntime: this.modelRuntime } : {}), ...(this.modelRegistry ? { modelRegistry: this.modelRegistry } : {}), ...(ctx.model ? { model: ctx.model } : {}), ...(ctx.thinkingLevel ? { thinkingLevel: ctx.thinkingLevel } : {}) });
     const onRootMessage = (fromId: string, message: string) => this.pi.sendMessage({ customType: "hypothesis-machine-agent-update", content: `Agent ${fromId} reports:\n\n${message}`, display: true, details: { fromId, runId: this.tree?.runId } }, { triggerTurn: false, deliverAs: "nextTurn" });
     this.tree = runId && store.exists(runId) ? AgentTree.restore(store, runtimeFactory, this.config, runId, onRootMessage) : new AgentTree(store, runtimeFactory, this.config, { goal: "Research requested in the current Supervisor session", inherited: { model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "inherit", thinkingLevel: ctx.thinkingLevel ?? "inherit" }, onRootMessage });
     runtimeFactory.attachTree(this.tree); if (!runId) this.pi.appendEntry(RUN_ENTRY, { runId: this.tree.runId });
+    // Remember which session file is the main chat so `/back` can return to it
+    // after an agent chat. Only the main session (RUN_ENTRY holder or the brand
+    // new session) is recorded; agent chats never overwrite it.
+    if (sessionFile && isMainSession) store.setMainSessionFile(this.tree.runId, sessionFile);
+    this.mainSessionFile = store.mainSessionFileOf(this.tree.runId);
     this.loop = new ResearchLoop(stateDir, this.tree.runId, this.tree.inspect(this.tree.rootId).task, this.config);
     this.lastScheduledIteration = this.loop.snapshot().iteration;
     const tools = createResearchTools({ tree: this.tree, parentId: this.tree.rootId, memory: this.memory, web: this.web, experiments: this.experiments, cwd: ctx.cwd, ...(this.config.subagent_model ? { subagentModel: this.config.subagent_model } : {}) });
@@ -63,8 +116,41 @@ export class SupervisorIntegration {
   team(): string { return this.required().tree.render(); }
   findings(kind?: string): unknown { return this.required().memory.list(kind); }
 
+  /**
+   * OpenCode-style subagent switcher: let the user pick an agent and open its
+   * full chat session in the TUI (like `Subagent Actions → Open` in OpenCode).
+   * `/back` returns to the main session.
+   */
+  async showAgentChat(ctx: ExtensionCommandContext, filter?: string): Promise<void> {
+    const { tree } = this.required();
+    const all = tree.list().filter((agent) => agent.id !== tree.rootId);
+    const query = (filter ?? "").trim().toLowerCase();
+    const agents = query
+      ? all.filter((agent) => agent.id.toLowerCase().includes(query) || agent.task.toLowerCase().includes(query))
+      : all;
+    if (agents.length === 0) { ctx.ui.notify(query ? `No agents match \"${filter}\"` : "No agents in this run yet", "info"); return; }
+    const options = buildAgentChatOptions(agents, Date.now());
+    const picked = await ctx.ui.select("Open agent chat (Esc cancels)", options);
+    if (!picked) return;
+    const index = options.indexOf(picked);
+    if (index < 0) { ctx.ui.notify("Selection was lost", "warning"); return; }
+    const agent = agents[index]!;
+    if (!agent.sessionFile) { ctx.ui.notify(`${shortAgentName(agent.id)} has no session file yet`, "warning"); return; }
+    const running = agent.status === "running" || agent.status === "waiting";
+    ctx.ui.notify(`Opening ${shortAgentName(agent.id)}'s chat…`, "info");
+    await ctx.switchSession(agent.sessionFile, {
+      withSession: async (replaced) => {
+        // The run is re-linked automatically: the new session's file lives under
+        // <stateDir>/runs/<runId>/sessions/ and `start()` derives the run id from
+        // the path, so the run is restored instead of a new one being created.
+        replaced.ui.notify(`Agent chat: ${shortAgentName(agent.id)}${running ? " — agent still running, view is a snapshot" : ""}. /back returns to the main session`, "info");
+      },
+    });
+  }
+
   /** Live subagent dashboard widget above the editor, refreshed on a light timer. */
   private installAgentWidget(ctx: ExtensionContext): void {
+    if (this.widgetTimer) { clearInterval(this.widgetTimer); this.widgetTimer = undefined; }
     ctx.ui.setWidget("hm-agents", (tui, theme) => {
       this.requestAgentRender = () => tui.requestRender();
       return {

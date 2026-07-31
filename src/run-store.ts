@@ -11,6 +11,8 @@ export interface RunManifest {
   createdAt: string;
   updatedAt: string;
   agents: Record<string, AgentRecord>;
+  /** Session file of the main chat, used by `/back` to return from an agent chat. */
+  mainSessionFile?: string;
 }
 
 export class RunStore {
@@ -31,6 +33,14 @@ export class RunStore {
     const data = JSON.parse(readFileSync(this.manifestPath(runId), "utf8")) as RunManifest;
     if (data.version !== 1 || data.runId !== runId || typeof data.agents !== "object") throw new Error(`Invalid run manifest: ${runId}`);
     return data;
+  }
+
+  mainSessionFileOf(runId: string): string | undefined { return this.load(runId).mainSessionFile; }
+
+  setMainSessionFile(runId: string, sessionFile: string): void {
+    const manifest = this.load(runId);
+    manifest.mainSessionFile = sessionFile;
+    this.save(manifest);
   }
 
   exists(runId: string): boolean { return existsSync(this.manifestPath(runId)); }

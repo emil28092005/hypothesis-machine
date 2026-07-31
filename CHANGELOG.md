@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- New `/agent [filter]` command opens a subagent's full chat session in the TUI
+  (OpenCode-style `Subagent Actions → Open`): a selector lists the run's agents
+  with status glyphs, elapsed time, and task; picking one switches the session
+  to the agent's own conversation so it can be read (and continued once idle)
+  in the normal pi view. `/back` returns to the main session. The run is
+  re-linked automatically: an agent chat session carries no RUN_ENTRY, so the
+  run id is derived from the session file path
+  (`<stateDir>/runs/<runId>/sessions/…`) and the run is restored instead of a
+  new one being created; the main session file is recorded in the run manifest
+  so `/back` works even after a reload while viewing an agent chat.
+- The live widget is re-attached safely on every session switch (timer guard).
+
 - Fixed the research loop and agent tree getting permanently stuck after
   `research_control stop`: `start` now restarts a stopped/completed run in the
   same session (`AgentTree.restart` revives the run, archives old branches, and
