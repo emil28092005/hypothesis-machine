@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
-import { defineTool, ModelRuntime, type ExtensionAPI, type ExtensionContext, type ModelRegistry, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
+import { defineTool, ModelRuntime, type ExtensionAPI, type ExtensionContext, type ModelRegistry, type Theme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { Text, truncateToWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { AgentTree } from "./agent-tree.js";
@@ -21,6 +21,8 @@ export class SupervisorIntegration {
   private modelRuntime: ModelRuntime | undefined;
   private modelRegistry: ModelRegistry | undefined;
   private lastScheduledIteration = 0;
+  private widgetTimer: NodeJS.Timeout | undefined;
+  private requestAgentRender: (() => void) | undefined;
   constructor(private readonly pi: ExtensionAPI) {}
 
   async start(ctx: ExtensionContext): Promise<void> {
@@ -39,7 +41,7 @@ export class SupervisorIntegration {
     this.lastScheduledIteration = this.loop.snapshot().iteration;
     const tools = createResearchTools({ tree: this.tree, parentId: this.tree.rootId, memory: this.memory, web: this.web, experiments: this.experiments, cwd: ctx.cwd });
     for (const tool of [...tools, this.researchControlTool()]) this.pi.registerTool(this.withCompactRenderer(tool));
-    if (ctx.hasUI) ctx.ui.setStatus("hypothesis-machine", `HM ${this.tree.runId} · ready`);
+    if (ctx.hasUI) { ctx.ui.setStatus("hypothesis-machine", `HM ${this.tree.runId} · ready`); this.installAgentWidget(ctx); }
   }
 
   private required() { if (!this.tree || !this.loop || !this.memory || !this.web || !this.experiments) throw new Error("Hypothesis Machine has not received session_start"); return { tree: this.tree, loop: this.loop, memory: this.memory, web: this.web, experiments: this.experiments }; }
@@ -60,6 +62,41 @@ export class SupervisorIntegration {
 
   team(): string { return this.required().tree.render(); }
   findings(kind?: string): unknown { return this.required().memory.list(kind); }
+
+  /** Live subagent dashboard widget above the editor, refreshed on a light timer. */
+  private installAgentWidget(ctx: ExtensionContext): void {
+    ctx.ui.setWidget("hm-agents", (tui, theme) => {
+      this.requestAgentRender = () => tui.requestRender();
+      return {
+        render: (width) => this.agentWidgetLines(theme).map((line) => truncateToWidth(line, width)),
+        invalidate: () => { /* lines are rebuilt fresh on every render */ },
+      };
+    });
+    this.widgetTimer = setInterval(() => { this.requestAgentRender?.(); }, 1500);
+  }
+
+  private agentWidgetLines(theme: Theme): string[] {
+    const tree = this.tree; const loop = this.loop;
+    if (!tree || !loop) return [];
+    const state = loop.snapshot();
+    const agents = tree.list();
+    const active = agents.filter((agent) => agent.status === "running" || agent.status === "waiting");
+    if (active.length === 0 && state.status !== "running") return [];
+    const now = Date.now();
+    const lines: string[] = [theme.fg("accent", `◆ ${state.runId} · ${state.status} · iter ${state.iteration} · ${active.length} active`)];
+    for (const agent of active) {
+      const elapsed = agent.startedAt ? Math.max(0, Math.round((now - Date.parse(agent.startedAt)) / 1000)) : 0;
+      const stamp = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;
+      lines.push(`  ${theme.fg("accent", "▸")} ${this.shortName(agent.id)} ${theme.fg("dim", stamp)}`);
+    }
+    for (const agent of agents.filter((agent) => agent.status === "completed" || agent.status === "failed").slice(-2).reverse()) {
+      const icon = agent.status === "completed" ? theme.fg("success", "✓") : theme.fg("error", "✖");
+      lines.push(`  ${icon} ${this.shortName(agent.id)} ${theme.fg("dim", agent.status)}`);
+    }
+    return lines;
+  }
+
+  private shortName(id: string): string { return id.replace(/-[a-f0-9]{8}$/, ""); }
   continueIfNeeded(ctx: ExtensionContext): void { const loop = this.loop; if (!loop || !ctx.isIdle()) return; const state = loop.snapshot(); if (state.status !== "running" || state.iteration <= this.lastScheduledIteration) return; this.lastScheduledIteration = state.iteration; if (ctx.hasUI) ctx.ui.setStatus("hypothesis-machine", `HM ${state.runId} · iteration ${state.iteration + 1}`); this.pi.sendUserMessage(`Continue bounded research run ${state.runId} with iteration ${state.iteration + 1}. Reassess unknowns and contradictions, use agents only where they add information, then call research_control record_iteration. Stop when its coded state is no longer running.`); }
-  async shutdown(): Promise<void> { await this.tree?.shutdown(); this.memory?.close(); this.tree = undefined; }
+  async shutdown(): Promise<void> { if (this.widgetTimer) { clearInterval(this.widgetTimer); this.widgetTimer = undefined; } this.requestAgentRender = undefined; await this.tree?.shutdown(); this.memory?.close(); this.tree = undefined; }
 }

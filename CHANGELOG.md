@@ -31,6 +31,9 @@
   tree as paused, and resume requires the loop to actually be paused.
 - `read_artifact` now resolves symlinks before the confinement check, so a
   symlink inside the project cannot leak files from outside it.
+- Added a live subagent dashboard: a TUI widget above the editor shows the
+  research run id, loop status, iteration, active agents with elapsed time,
+  and recently finished agents (updated every 1.5 s, hidden when idle).
 
 ## 0.1.1 — 2026-07-31
 
