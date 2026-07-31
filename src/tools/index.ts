@@ -1,5 +1,5 @@
 import { resolve, sep } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { defineTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -10,7 +10,13 @@ import type { WebGateway } from "./web.js";
 
 interface ToolDeps { tree: AgentTree; parentId: string; memory: ResearchMemory; web: WebGateway; experiments: ExperimentRunner; cwd: string }
 const text = (value: unknown, details: unknown = {}) => ({ content: [{ type: "text" as const, text: typeof value === "string" ? value : JSON.stringify(value, null, 2) }], details });
-function confined(root: string, path: string): string { const absolute = resolve(root, path); if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) throw new Error("Path escapes the allowed project/state directory"); return absolute; }
+export function confined(root: string, path: string): string {
+  const absolute = resolve(root, path);
+  let real = absolute; let realRoot = root;
+  try { real = realpathSync(absolute); realRoot = realpathSync(root); } catch { /* file may not exist; the lexical check below still applies */ }
+  if (real !== realRoot && !real.startsWith(`${realRoot}${sep}`)) throw new Error("Path escapes the allowed project/state directory");
+  return absolute;
+}
 
 export function createResearchTools(deps: ToolDeps): ToolDefinition[] {
   const spawn = defineTool({

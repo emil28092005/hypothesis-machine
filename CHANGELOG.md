@@ -26,6 +26,11 @@
   cannot exhaust memory or disk.
 - Verified that Pi's extension tool registry is per-extension-instance, so
   reload re-registration is safe (no fix required).
+- `research_control pause`/`resume` no longer desync the agent tree from the
+  loop: pausing a non-running loop now errors instead of silently marking the
+  tree as paused, and resume requires the loop to actually be paused.
+- `read_artifact` now resolves symlinks before the confinement check, so a
+  symlink inside the project cannot leak files from outside it.
 
 ## 0.1.1 — 2026-07-31
 
