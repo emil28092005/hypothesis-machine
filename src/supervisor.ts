@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { defineTool, ModelRuntime, type ExtensionAPI, type ExtensionContext, type ModelRegistry, type Theme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { createAgentTreeOverlay } from "./agent-tree-ui.js";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { AgentTree } from "./agent-tree.js";
@@ -63,6 +64,15 @@ export class SupervisorIntegration {
   team(): string { return this.required().tree.render(); }
   findings(kind?: string): unknown { return this.required().memory.list(kind); }
 
+  /** Open the interactive agent-tree overlay. */
+  async showAgentTree(ctx: ExtensionContext): Promise<void> {
+    const tree = this.required().tree;
+    await ctx.ui.custom<undefined>((tui, theme, _kb, done) => createAgentTreeOverlay(tree, tui, theme, () => done(undefined)), {
+      overlay: true,
+      overlayOptions: { width: "65%", minWidth: 60, maxHeight: "75%", anchor: "center", visible: (termWidth) => termWidth >= 60 },
+    });
+  }
+
   /** Live subagent dashboard widget above the editor, refreshed on a light timer. */
   private installAgentWidget(ctx: ExtensionContext): void {
     ctx.ui.setWidget("hm-agents", (tui, theme) => {
@@ -83,7 +93,7 @@ export class SupervisorIntegration {
     const active = agents.filter((agent) => agent.status === "running" || agent.status === "waiting");
     if (active.length === 0 && state.status !== "running") return [];
     const now = Date.now();
-    const lines: string[] = [theme.fg("accent", `◆ ${state.runId} · ${state.status} · iter ${state.iteration} · ${active.length} active`)];
+    const lines: string[] = [theme.fg("accent", `◆ ${state.runId} · ${state.status} · iter ${state.iteration} · ${active.length} active`) + theme.fg("dim", "  /agents")];
     for (const agent of active) {
       const elapsed = agent.startedAt ? Math.max(0, Math.round((now - Date.parse(agent.startedAt)) / 1000)) : 0;
       const stamp = `${String(Math.floor(elapsed / 60)).padStart(2, "0")}:${String(elapsed % 60).padStart(2, "0")}`;

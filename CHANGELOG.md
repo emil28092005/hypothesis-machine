@@ -39,6 +39,10 @@
   once, and optional `subagent_model` routes subagents to a different
   model/backend (e.g. a local Ollama model) so they never contend with the
   main session.
+- New `/agents` command opens an interactive overlay with the full agent tree:
+  tree glyphs (├─/└─/│), colored statuses and icons, live elapsed time,
+  keyboard navigation (↑/↓), and a detail pane (Enter) showing each agent's
+  task and result. The live widget header now hints at `/agents`.
 
 ## 0.1.1 — 2026-07-31
 
