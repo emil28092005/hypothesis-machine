@@ -15,6 +15,17 @@
 - Full-text search now prefix-matches tokens (tolerates Russian/English
   inflections without stemming) and safely handles punctuation and FTS5
   metacharacters instead of throwing or returning false negatives.
+- Hardened the web gateway against SSRF TOCTOU: outbound downloads now resolve
+  DNS once, validate the address, and connect to the validated IP directly
+  (pinned resolution), so DNS rebinding cannot redirect the connection to a
+  private target; malformed search results no longer break the whole query;
+  the web cache is bounded (oldest entries evicted past 500 files).
+- Experiment review is now truly independent: the reviewer must not be a
+  descendant of the experiment author (in addition to not being the author).
+- Experiment stdout/stderr are capped at 512 KB so runaway container output
+  cannot exhaust memory or disk.
+- Verified that Pi's extension tool registry is per-extension-instance, so
+  reload re-registration is safe (no fix required).
 
 ## 0.1.1 — 2026-07-31
 

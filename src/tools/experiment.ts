@@ -15,8 +15,10 @@ export function dockerArguments(config: HypothesisMachineConfig["experiment"], d
   return ["run", "--rm", ...(containerName ? ["--name", containerName] : []), "--network", "none", "--read-only", "--cpus", String(config.cpus), "--memory", `${config.memory_mb}m`, "--pids-limit", "128", "--cap-drop", "ALL", "--security-opt", "no-new-privileges", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "-v", `${directory}:/workspace:ro`, "-v", `${resolve(directory, "artifacts")}:/workspace/artifacts:rw`, "-w", "/workspace", image, "sh", "-lc", command];
 }
 
+const MAX_LOG_BYTES = 512 * 1024;
+
 async function runProcess(command: string, args: string[], timeoutMs: number, onTimeout?: () => void): Promise<{ code: number; stdout: string; stderr: string; timeout: boolean }> {
-  return new Promise((resolvePromise, reject) => { const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH ?? "/usr/bin:/bin" } }); let stdout = "", stderr = "", timeout = false; child.stdout.on("data", (chunk) => stdout += String(chunk)); child.stderr.on("data", (chunk) => stderr += String(chunk)); const timer = setTimeout(() => { timeout = true; onTimeout?.(); child.kill("SIGKILL"); }, timeoutMs); child.on("error", reject); child.on("close", (code) => { clearTimeout(timer); resolvePromise({ code: code ?? 1, stdout, stderr, timeout }); }); });
+  return new Promise((resolvePromise, reject) => { const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"], env: { PATH: process.env.PATH ?? "/usr/bin:/bin" } }); let stdout = "", stderr = "", timeout = false; child.stdout.on("data", (chunk) => { stdout = (stdout + String(chunk)).slice(-MAX_LOG_BYTES); }); child.stderr.on("data", (chunk) => { stderr = (stderr + String(chunk)).slice(-MAX_LOG_BYTES); }); const timer = setTimeout(() => { timeout = true; onTimeout?.(); child.kill("SIGKILL"); }, timeoutMs); child.on("error", reject); child.on("close", (code) => { clearTimeout(timer); resolvePromise({ code: code ?? 1, stdout, stderr, timeout }); }); });
 }
 
 export class ExperimentRunner {
@@ -38,6 +40,13 @@ export class ExperimentRunner {
     writeFileSync(resolve(directory, "stdout.log"), result.stdout, { mode: 0o600 }); writeFileSync(resolve(directory, "stderr.log"), result.stderr, { mode: 0o600 });
     const producedMetrics = resolve(directory, "artifacts", "metrics.json"); if (existsSync(producedMetrics)) copyFileSync(producedMetrics, resolve(directory, "metrics.json"));
     return { id, status: result.timeout ? "timeout" : result.code === 0 ? "completed" : "failed", exitCode: result.code, directory, planHash };
+  }
+
+  authorOf(experimentId: string): string {
+    if (!/^exp-[a-f0-9]{8}$/.test(experimentId)) throw new Error("Invalid experiment id");
+    const manifestPath = resolve(this.stateDir, "experiments", experimentId, "experiment-manifest.json");
+    if (!existsSync(manifestPath)) throw new Error(`Unknown experiment: ${experimentId}`);
+    return (JSON.parse(readFileSync(manifestPath, "utf8")) as { createdBy: string }).createdBy;
   }
 
   review(input: ExperimentReview): { experimentId: string; status: HypothesisStatus; reviewPath: string } {
