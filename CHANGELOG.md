@@ -43,6 +43,10 @@
   tree glyphs (├─/└─/│), colored statuses and icons, live elapsed time,
   keyboard navigation (↑/↓), and a detail pane (Enter) showing each agent's
   task and result. The live widget header now hints at `/agents`.
+- New `/agents-panel` command toggles a persistent OpenCode-style right-side
+  panel with the live agent tree: non-capturing (typing keeps working),
+  auto-refreshed every 1.5 s, hidden on terminals narrower than 100 columns,
+  and closed automatically on shutdown.
 
 ## 0.1.1 — 2026-07-31
 

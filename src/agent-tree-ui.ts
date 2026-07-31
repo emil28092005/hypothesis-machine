@@ -3,19 +3,19 @@ import type { Theme } from "@earendil-works/pi-coding-agent";
 import type { AgentTree } from "./agent-tree.js";
 import type { AgentRecord } from "./types.js";
 
-interface TreeRow { record: AgentRecord; prefix: string }
+interface TreeRow { record: AgentRecord; prefix: string; depth: number }
 
 /** Flatten the agent tree into rows with tree glyphs (├─/└─/│). */
 function buildRows(tree: AgentTree): TreeRow[] {
   const rows: TreeRow[] = [];
   const root = tree.inspect(tree.rootId);
-  const walk = (record: AgentRecord, ancestors: boolean[], last: boolean): void => {
+  const walk = (record: AgentRecord, ancestors: boolean[], last: boolean, depth: number): void => {
     const indent = ancestors.map((isLast) => (isLast ? "   " : "│  ")).join("");
     const connector = ancestors.length === 0 ? "" : last ? "└─ " : "├─ ";
-    rows.push({ record, prefix: indent + connector });
-    record.children.forEach((childId, index) => walk(tree.inspect(childId), [...ancestors, last], index === record.children.length - 1));
+    rows.push({ record, prefix: indent + connector, depth });
+    record.children.forEach((childId, index) => walk(tree.inspect(childId), [...ancestors, last], index === record.children.length - 1, depth + 1));
   };
-  walk(root, [], false);
+  walk(root, [], false, 0);
   return rows;
 }
 
@@ -42,6 +42,35 @@ function elapsed(record: AgentRecord, now: number): string {
   if (!end) return "";
   const span = Math.max(0, Math.round((end - start) / 1000));
   return `${String(Math.floor(span / 60)).padStart(2, "0")}:${String(span % 60).padStart(2, "0")}`;
+}
+
+/** Persistent non-capturing right-side panel: live agent tree without keyboard navigation. */
+export function createAgentPanelComponent(
+  tree: AgentTree,
+  tui: { requestRender(): void },
+  theme: Theme,
+  done: () => void,
+): { render(width: number): string[]; invalidate(): void; handleInput(data: string): void; dispose(): void } {
+  const timer = setInterval(() => tui.requestRender(), 1500);
+  return {
+    render(width) {
+      const rows = buildRows(tree).filter((row) => row.depth > 0);
+      const now = Date.now();
+      const active = rows.filter((row) => row.record.status === "running" || row.record.status === "waiting").length;
+      const lines: string[] = [theme.fg("accent", `◆ agents`) + theme.fg("dim", ` · ${tree.runId}`), theme.fg("dim", `${active} active · ${rows.length} agents`), ""];
+      for (const { record, prefix } of rows) {
+        const icon = STATUS_ICON[record.status];
+        const status = STATUS_COLOR[record.status](theme, record.status);
+        const time = elapsed(record, now);
+        lines.push(`${prefix}${theme.fg("text", icon)} ${theme.fg("text", shortName(record.id))} ${status}${time ? ` ${theme.fg("dim", time)}` : ""}`);
+      }
+      lines.push("", theme.fg("dim", "/agents — details · /agents-panel — hide"));
+      return lines.map((line) => truncateToWidth(line, width));
+    },
+    invalidate() { /* rebuilt fresh on every render */ },
+    handleInput() { /* non-capturing: keys go to the editor */ },
+    dispose() { clearInterval(timer); },
+  };
 }
 
 /** Interactive overlay showing the full agent tree with live statuses, keyboard navigation, and a detail pane. */

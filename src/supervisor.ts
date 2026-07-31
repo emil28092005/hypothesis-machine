@@ -1,7 +1,7 @@
 import { resolve } from "node:path";
 import { defineTool, ModelRuntime, type ExtensionAPI, type ExtensionContext, type ModelRegistry, type Theme, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { createAgentTreeOverlay } from "./agent-tree-ui.js";
+import { createAgentPanelComponent, createAgentTreeOverlay } from "./agent-tree-ui.js";
 import { Type } from "typebox";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { AgentTree } from "./agent-tree.js";
@@ -24,6 +24,8 @@ export class SupervisorIntegration {
   private lastScheduledIteration = 0;
   private widgetTimer: NodeJS.Timeout | undefined;
   private requestAgentRender: (() => void) | undefined;
+  /** Closes the persistent right-side agent panel if it is open. */
+  agentPanelClose: (() => void) | undefined;
   constructor(private readonly pi: ExtensionAPI) {}
 
   async start(ctx: ExtensionContext): Promise<void> {
@@ -73,6 +75,18 @@ export class SupervisorIntegration {
     });
   }
 
+  /** Open a persistent non-capturing agent panel on the right side (OpenCode-style). */
+  async showAgentPanel(ctx: ExtensionContext): Promise<void> {
+    const tree = this.required().tree;
+    await ctx.ui.custom<undefined>((tui, theme, _kb, done) => {
+      this.agentPanelClose = () => done(undefined);
+      return createAgentPanelComponent(tree, tui, theme, () => { this.agentPanelClose = undefined; done(undefined); });
+    }, {
+      overlay: true,
+      overlayOptions: { width: "36%", minWidth: 44, maxHeight: "85%", anchor: "top-right", margin: 1, nonCapturing: true, visible: (termWidth) => termWidth >= 100 },
+    });
+  }
+
   /** Live subagent dashboard widget above the editor, refreshed on a light timer. */
   private installAgentWidget(ctx: ExtensionContext): void {
     ctx.ui.setWidget("hm-agents", (tui, theme) => {
@@ -108,5 +122,5 @@ export class SupervisorIntegration {
 
   private shortName(id: string): string { return id.replace(/-[a-f0-9]{8}$/, ""); }
   continueIfNeeded(ctx: ExtensionContext): void { const loop = this.loop; if (!loop || !ctx.isIdle()) return; const state = loop.snapshot(); if (state.status !== "running" || state.iteration <= this.lastScheduledIteration) return; this.lastScheduledIteration = state.iteration; if (ctx.hasUI) ctx.ui.setStatus("hypothesis-machine", `HM ${state.runId} · iteration ${state.iteration + 1}`); this.pi.sendUserMessage(`Continue bounded research run ${state.runId} with iteration ${state.iteration + 1}. Reassess unknowns and contradictions, use agents only where they add information, then call research_control record_iteration. Stop when its coded state is no longer running.`); }
-  async shutdown(): Promise<void> { if (this.widgetTimer) { clearInterval(this.widgetTimer); this.widgetTimer = undefined; } this.requestAgentRender = undefined; await this.tree?.shutdown(); this.memory?.close(); this.tree = undefined; }
+  async shutdown(): Promise<void> { this.agentPanelClose?.(); this.agentPanelClose = undefined; if (this.widgetTimer) { clearInterval(this.widgetTimer); this.widgetTimer = undefined; } this.requestAgentRender = undefined; await this.tree?.shutdown(); this.memory?.close(); this.tree = undefined; }
 }
