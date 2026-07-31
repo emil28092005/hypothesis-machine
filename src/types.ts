@@ -95,4 +95,5 @@ export interface ResearchLimits {
   max_iterations_without_progress: number;
   allow_recursive_spawning: boolean;
   max_research_iterations: number;
+  agent_timeout_seconds: number;
 }

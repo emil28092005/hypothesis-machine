@@ -14,8 +14,16 @@ export class ResearchLoop {
     this.state = (() => { try { return JSON.parse(readFileSync(this.path, "utf8")) as ResearchLoopState; } catch { const now = new Date().toISOString(); return { runId, goal, status: "planning", iteration: 0, noProgressIterations: 0, createdAt: now, updatedAt: now, reports: [] }; } })(); this.persist();
   }
   snapshot(): ResearchLoopState { return structuredClone(this.state); }
-  setGoal(goal: string): void { if (this.state.iteration > 0 && this.state.goal !== goal.trim()) throw new Error("Start a new research run to change the goal after iterations have been recorded"); this.state.goal = goal.trim(); this.persist(); }
-  start(): void { if (["completed", "stopped"].includes(this.state.status)) throw new Error(`Research loop is ${this.state.status}`); this.state.status = "running"; this.persist(); }
+  setGoal(goal: string): void {
+    const terminal = ["stopped", "completed"].includes(this.state.status);
+    if (!terminal && this.state.iteration > 0 && this.state.goal !== goal.trim()) throw new Error("Start a new research run to change the goal after iterations have been recorded");
+    this.state.goal = goal.trim(); this.persist();
+  }
+  start(): void {
+    if (this.state.status === "running") return;
+    if (["stopped", "completed"].includes(this.state.status)) { this.state.iteration = 0; this.state.noProgressIterations = 0; this.state.reports = []; delete this.state.stopReason; }
+    this.state.status = "running"; this.persist();
+  }
   pause(): void { if (this.state.status === "running") { this.state.status = "paused"; this.persist(); } }
   resume(): void { if (this.state.status !== "paused") throw new Error("Only a paused loop can resume"); this.state.status = "running"; this.persist(); }
   stop(reason = "Stopped by user"): void { this.state.status = "stopped"; this.state.stopReason = reason; this.persist(); }

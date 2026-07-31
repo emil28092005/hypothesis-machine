@@ -83,8 +83,14 @@ export class ResearchMemory {
 
   search(query: string, limit = 10): MemorySearchResult[] {
     const safeLimit = Math.max(1, Math.min(50, limit));
-    const expression = query.replace(/[\"']/g, " ").trim().split(/\s+/).filter(Boolean).map((word) => `\"${word}\"`).join(" OR "); if (!expression) return [];
+    const expression = this.ftsExpression(query); if (!expression) return [];
     return this.database().prepare("SELECT d.id,d.kind,d.status,d.title,d.path,snippet(documents_fts,2,'[',']',' … ',24) snippet,bm25(documents_fts) rank FROM documents_fts JOIN documents d ON d.id=documents_fts.id WHERE documents_fts MATCH ? ORDER BY rank LIMIT ?").all(expression, safeLimit) as unknown as MemorySearchResult[];
+  }
+  /** Build an FTS5 MATCH expression: split on punctuation, drop operators, prefix long tokens to tolerate inflections (no stemming in unicode61). */
+  private ftsExpression(query: string): string {
+    const tokens = query.replace(/["'`]/g, " ").split(/[^\p{L}\p{N}_]+/u).filter(Boolean).filter((word) => !/^(and|or|not|near)$/i.test(word));
+    if (!tokens.length) return "";
+    return tokens.map((word) => (word.length >= 4 ? `\"${word}\"*` : `\"${word}\"`)).join(" OR ");
   }
   list(kind?: string): Array<Record<string, unknown>> { return this.database().prepare(kind ? "SELECT * FROM documents WHERE kind=? ORDER BY updated_at DESC" : "SELECT * FROM documents ORDER BY updated_at DESC").all(...(kind ? [kind] : [])) as Array<Record<string, unknown>>; }
   close(): void { this.db?.close(); this.db = undefined; }

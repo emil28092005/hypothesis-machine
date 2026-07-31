@@ -62,10 +62,11 @@ export class AgentTree {
     if (!this.limits.allow_recursive_spawning && parent.depth > 0) throw new AgentTreeError("Recursive spawning is disabled");
     if (parent.depth + 1 > this.limits.max_depth) throw new AgentTreeError(`Maximum depth ${this.limits.max_depth} exceeded`);
     const parentSpecLimit = readAgentSpec(parent.specPath).max_children;
-    if (parent.children.length >= Math.min(this.limits.max_children_per_agent, parentSpecLimit)) throw new AgentTreeError("Parent child limit exceeded");
+    const liveChildren = parent.children.filter((childId) => !["cancelled", "failed", "archived"].includes(this.manifest.agents[childId]?.status ?? "")).length;
+    if (liveChildren >= Math.min(this.limits.max_children_per_agent, parentSpecLimit)) throw new AgentTreeError("Parent child limit exceeded");
     if (this.activeCount() >= this.limits.max_active_agents) throw new AgentTreeError("Active agent limit exceeded");
     if (Object.keys(this.manifest.agents).length >= this.limits.max_total_agents_per_run) throw new AgentTreeError("Total agent limit exceeded");
-    const duplicate = Object.values(this.manifest.agents).find((candidate) => candidate.taskFingerprint === taskFingerprint(request.task) && candidate.status !== "cancelled");
+    const duplicate = Object.values(this.manifest.agents).find((candidate) => candidate.taskFingerprint === taskFingerprint(request.task) && !["cancelled", "archived"].includes(candidate.status));
     const validReplication = request.replicationOf && request.independentContext === true;
     if (duplicate && !validReplication) throw new AgentTreeError(`Duplicate task already owned by ${duplicate.id}; mark an independent replication explicitly`);
     if (request.replicationOf && !this.manifest.agents[request.replicationOf]) throw new AgentTreeError(`Replication target not found: ${request.replicationOf}`);
@@ -94,14 +95,26 @@ export class AgentTree {
     if (runtime.sessionFile) record.sessionFile = runtime.sessionFile;
     record.status = "running"; record.startedAt = new Date().toISOString(); this.persist();
     const prompt = `Execute your specification at ${record.specPath}. Your agent id is ${id}. Return a concise evidence-backed result. Use spawn_agent when a genuinely specialized subtask merits recursion.`;
-    const execution = runtime.start(prompt).then((result) => {
-      if (record.status === "interrupted") return result;
-      if (record.status === "cancelled") return record.result ?? ({ status: "cancelled", summary: "Cancelled", completedAt: record.finishedAt ?? new Date().toISOString() } satisfies AgentResult);
-      record.result = result; record.status = result.status; record.finishedAt = result.completedAt; this.persist(); return result;
-    }).catch((error: unknown) => {
-      record.status = "failed"; record.error = error instanceof Error ? error.message : String(error); record.finishedAt = new Date().toISOString(); this.persist();
-      return { status: "failed", summary: record.error, completedAt: record.finishedAt } satisfies AgentResult;
-    }).finally(() => { runtime.dispose(); this.runtimes.delete(id); this.executions.delete(id); });
+    const timeoutSeconds = this.limits.agent_timeout_seconds ?? 1800;
+    const execution = new Promise<AgentResult>((resolveExecution) => {
+      let settled = false;
+      const finish = (result: AgentResult) => { if (settled) return; settled = true; clearTimeout(timer); record.finishedAt = result.completedAt; this.persist(); resolveExecution(result); };
+      const timer = setTimeout(() => {
+        record.status = "failed"; record.error = `Agent timed out after ${timeoutSeconds}s`; record.finishedAt = new Date().toISOString();
+        void runtime.cancel().catch(() => undefined);
+        finish({ status: "failed", summary: `Agent timed out after ${timeoutSeconds}s`, completedAt: record.finishedAt });
+      }, timeoutSeconds * 1000);
+      runtime.start(prompt).then((result) => {
+        if (settled) return;
+        if (record.status === "interrupted") { finish(result); return; }
+        if (record.status === "cancelled") { finish(record.result ?? { status: "cancelled", summary: "Cancelled", completedAt: record.finishedAt ?? new Date().toISOString() }); return; }
+        record.result = result; record.status = result.status; finish(result);
+      }).catch((error: unknown) => {
+        if (settled) return;
+        record.status = "failed"; record.error = error instanceof Error ? error.message : String(error);
+        finish({ status: "failed", summary: record.error, completedAt: new Date().toISOString() });
+      }).finally(() => { clearTimeout(timer); runtime.dispose(); this.runtimes.delete(id); this.executions.delete(id); });
+    });
     this.executions.set(id, execution);
     return execution;
   }
@@ -113,7 +126,7 @@ export class AgentTree {
   async waitMany(ids: string[]): Promise<AgentResult[]> { return Promise.all(ids.map((id) => this.wait(id))); }
 
   async cancel(id: string): Promise<void> {
-    const record = this.mutable(id); await this.runtimes.get(id)?.cancel(); record.status = "cancelled"; record.finishedAt = new Date().toISOString(); record.result = { status: "cancelled", summary: "Cancelled by branch control", completedAt: record.finishedAt }; this.persist();
+    const record = this.mutable(id); await this.runtimes.get(id)?.cancel(); record.status = "cancelled"; record.finishedAt = new Date().toISOString(); record.result ??= { status: "cancelled", summary: "Cancelled by branch control", completedAt: record.finishedAt }; this.persist();
   }
   async cancelBranch(id: string): Promise<void> { const record = this.mutable(id); await Promise.all(record.children.map((child) => this.cancelBranch(child))); await this.cancel(id); }
   collectResult(id: string): AgentResult | undefined { return this.mutable(id).result ? structuredClone(this.mutable(id).result) : undefined; }
@@ -121,7 +134,27 @@ export class AgentTree {
   pause(): void { this.manifest.status = "paused"; this.persist(); }
   resume(): void { this.manifest.status = "active"; this.persist(); }
   setGoal(goal: string): void { this.manifest.goal = goal.trim(); const root = this.mutable(this.rootId); if (root.children.length === 0) { root.task = goal.trim(); root.taskFingerprint = taskFingerprint(goal); } this.persist(); }
-  async stop(): Promise<void> { this.manifest.status = "stopped"; await this.cancelBranch(this.rootId); this.persist(); }
+  async stop(): Promise<void> {
+    this.manifest.status = "stopped";
+    const root = this.mutable(this.rootId);
+    await Promise.all(root.children.map((child) => this.cancelBranch(child)));
+    this.persist();
+  }
+  /** Start a fresh run in the same session: revive the manifest, archive old branches, and reset the root so new agents can be spawned. */
+  restart(goal: string): void {
+    const trimmed = goal.trim();
+    this.manifest.status = "active"; this.manifest.goal = trimmed;
+    const root = this.mutable(this.rootId);
+    for (const childId of root.children) {
+      const child = this.mutable(childId);
+      if (child.status === "running" || child.status === "waiting") { void this.runtimes.get(childId)?.cancel().catch(() => undefined); child.status = "interrupted"; }
+      child.status = "archived";
+    }
+    root.children = [];
+    root.status = "created"; root.task = trimmed; root.taskFingerprint = taskFingerprint(trimmed);
+    delete root.result; delete root.error; delete root.startedAt; delete root.finishedAt; delete root.sessionFile;
+    this.persist();
+  }
   async shutdown(): Promise<void> {
     for (const [id, runtime] of this.runtimes) { await runtime.cancel().catch(() => undefined); const record = this.mutable(id); if (record.status === "running" || record.status === "waiting") record.status = "interrupted"; runtime.dispose(); }
     this.runtimes.clear(); this.executions.clear(); this.persist();

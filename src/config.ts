@@ -21,6 +21,7 @@ export const DEFAULT_CONFIG: HypothesisMachineConfig = {
   max_total_agents_per_run: 200,
   max_iterations_without_progress: 3,
   max_research_iterations: 12,
+  agent_timeout_seconds: 1800,
   allow_recursive_spawning: true,
   searxng_url: "http://127.0.0.1:8888",
   firecrawl_url: "http://127.0.0.1:3002",

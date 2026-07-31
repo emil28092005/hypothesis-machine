@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- Fixed the research loop and agent tree getting permanently stuck after
+  `research_control stop`: `start` now restarts a stopped/completed run in the
+  same session (`AgentTree.restart` revives the run, archives old branches, and
+  resets the root), `ResearchLoop.start` resets iteration counters, and goal
+  changes are allowed after stop/completion.
+- Cancelled/failed/archived children no longer count toward the per-agent child
+  limit, and archived agents are ignored by the duplicate-task guard.
+- `cancel()` no longer overwrites an already recorded agent result.
+- Added a per-agent execution timeout (`agent_timeout_seconds`, default 1800)
+  so a hung agent session fails instead of blocking `wait` forever.
+- Full-text search now prefix-matches tokens (tolerates Russian/English
+  inflections without stemming) and safely handles punctuation and FTS5
+  metacharacters instead of throwing or returning false negatives.
+
 ## 0.1.1 — 2026-07-31
 
 - Added GitHub CI, CodeQL, Dependabot, contribution/security templates, and the
